@@ -1,6 +1,6 @@
-import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src/Interface'
+import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src'
 import { NodeVM } from 'vm2'
-import { availableDependencies, handleEscapeCharacters } from '../../../src/utils'
+import { availableDependencies, handleEscapeCharacters } from '../../../src'
 
 class CustomFunction_Utilities implements INode {
     label: string
