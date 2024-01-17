@@ -1,16 +1,16 @@
-import express, { NextFunction, Request, Response } from 'express'
+import express, {NextFunction, Request, Response} from 'express'
 import multer from 'multer'
 import path from 'path'
 import cors from 'cors'
 import http from 'http'
 import * as fs from 'fs'
 import basicAuth from 'express-basic-auth'
-import { Server } from 'socket.io'
+import {Server} from 'socket.io'
 import logger from './utils/logger'
-import { expressRequestLogger } from './utils/logger'
-import { v4 as uuidv4 } from 'uuid'
+import {expressRequestLogger} from './utils/logger'
+import {v4 as uuidv4} from 'uuid'
 import OpenAI from 'openai'
-import { Between, IsNull, FindOptionsWhere } from 'typeorm'
+import {Between, IsNull, FindOptionsWhere} from 'typeorm'
 import {
     IChatFlow,
     IncomingInput,
@@ -47,24 +47,26 @@ import {
     clearSessionMemory,
     findMemoryNode
 } from './utils'
-import { cloneDeep, omit, uniqWith, isEqual } from 'lodash'
-import { getDataSource } from './DataSource'
-import { NodesPool } from './NodesPool'
-import { ChatFlow } from './database/entities/ChatFlow'
-import { ChatMessage } from './database/entities/ChatMessage'
-import { Credential } from './database/entities/Credential'
-import { Tool } from './database/entities/Tool'
-import { Assistant } from './database/entities/Assistant'
-import { ChatflowPool } from './ChatflowPool'
-import { CachePool } from './CachePool'
-import { ICommonObject, IMessage, INodeOptionsValue, handleEscapeCharacters } from 'flowise-components'
-import { createRateLimiter, getRateLimiter, initializeRateLimiter } from './utils/rateLimit'
-import { addAPIKey, compareKeys, deleteAPIKey, getApiKey, getAPIKeys, updateAPIKey } from './utils/apiKey'
-import { sanitizeMiddleware } from './utils/XSS'
+import {cloneDeep, omit, uniqWith, isEqual} from 'lodash'
+import {getDataSource} from './DataSource'
+import {NodesPool} from './NodesPool'
+import {ChatFlow} from './database/entities/ChatFlow'
+import {ChatMessage} from './database/entities/ChatMessage'
+import {Credential} from './database/entities/Credential'
+import {Tool} from './database/entities/Tool'
+import {Assistant} from './database/entities/Assistant'
+import {ChatflowPool} from './ChatflowPool'
+import {CachePool} from './CachePool'
+import {ICommonObject, IMessage, INodeOptionsValue, handleEscapeCharacters} from 'flowise-components'
+import {createRateLimiter, getRateLimiter, initializeRateLimiter} from './utils/rateLimit'
+import {addAPIKey, compareKeys, deleteAPIKey, getApiKey, getAPIKeys, updateAPIKey} from './utils/apiKey'
+import {sanitizeMiddleware} from './utils/XSS'
 import axios from 'axios'
-import { Client } from 'langchainhub'
-import { parsePrompt } from './utils/hub'
-import { Variable } from './database/entities/Variable'
+import {Client} from 'langchainhub'
+import {parsePrompt} from './utils/hub'
+import {Variable} from './database/entities/Variable'
+import {detectKorean} from "./utils/detectLanguage";
+import translateWithGPT3 from "./api/translate";
 
 export class App {
     app: express.Application
@@ -84,7 +86,7 @@ export class App {
                 logger.info('📦 [server]: Data Source has been initialized!')
 
                 // Run Migrations Scripts
-                await this.AppDataSource.runMigrations({ transaction: 'each' })
+                await this.AppDataSource.runMigrations({transaction: 'each'})
 
                 // Initialize nodes pool
                 this.nodesPool = new NodesPool()
@@ -113,8 +115,8 @@ export class App {
 
     async config(socketIO?: Server) {
         // Limit is needed to allow sending/receiving base64 encoded string
-        this.app.use(express.json({ limit: '50mb' }))
-        this.app.use(express.urlencoded({ limit: '50mb', extended: true }))
+        this.app.use(express.json({limit: '50mb'}))
+        this.app.use(express.urlencoded({limit: '50mb', extended: true}))
 
         if (process.env.NUMBER_OF_PROXIES && parseInt(process.env.NUMBER_OF_PROXIES) > 0)
             this.app.set('trust proxy', parseInt(process.env.NUMBER_OF_PROXIES))
@@ -135,7 +137,7 @@ export class App {
             const username = process.env.FLOWISE_USERNAME
             const password = process.env.FLOWISE_PASSWORD
             const basicAuthMiddleware = basicAuth({
-                users: { [username]: password }
+                users: {[username]: password}
             })
             const whitelistURLs = [
                 '/api/v1/verify/apikey/',
@@ -157,7 +159,7 @@ export class App {
             })
         }
 
-        const upload = multer({ dest: `${path.join(__dirname, '..', 'uploads')}/` })
+        const upload = multer({dest: `${path.join(__dirname, '..', 'uploads')}/`})
 
         // ----------------------------------------
         // Configure number of proxies in Host Environment
@@ -287,7 +289,7 @@ export class App {
         // execute custom function node
         this.app.post('/api/v1/node-custom-function', async (req: Request, res: Response) => {
             const body = req.body
-            const nodeData = { inputs: body }
+            const nodeData = {inputs: body}
             if (Object.prototype.hasOwnProperty.call(this.nodesPool.componentNodes, 'customFunction')) {
                 try {
                     const nodeInstanceFilePath = this.nodesPool.componentNodes['customFunction'].filePath as string
@@ -324,7 +326,7 @@ export class App {
                 if (!apiKey) return res.status(401).send('Unauthorized')
                 const chatflows = await this.AppDataSource.getRepository(ChatFlow)
                     .createQueryBuilder('cf')
-                    .where('cf.apikeyid = :apikeyid', { apikeyid: apiKey.id })
+                    .where('cf.apikeyid = :apikeyid', {apikeyid: apiKey.id})
                     .orWhere('cf.apikeyid IS NULL')
                     .orWhere('cf.apikeyid = ""')
                     .orderBy('cf.name', 'ASC')
@@ -418,7 +420,7 @@ export class App {
 
         // Delete chatflow via id
         this.app.delete('/api/v1/chatflows/:id', async (req: Request, res: Response) => {
-            const results = await this.AppDataSource.getRepository(ChatFlow).delete({ id: req.params.id })
+            const results = await this.AppDataSource.getRepository(ChatFlow).delete({id: req.params.id})
             return res.json(results)
         })
 
@@ -434,7 +436,7 @@ export class App {
             const parsedFlowData: IReactFlowObject = JSON.parse(flowData)
             const nodes = parsedFlowData.nodes
             const edges = parsedFlowData.edges
-            const { graph, nodeDependencies } = constructGraphs(nodes, edges)
+            const {graph, nodeDependencies} = constructGraphs(nodes, edges)
 
             const endingNodeIds = getEndingNodes(nodeDependencies, graph)
             if (!endingNodeIds.length) return res.status(500).send(`Ending nodes not found`)
@@ -453,7 +455,7 @@ export class App {
                 isStreaming = isFlowValidForStream(nodes, endingNodeData)
             }
 
-            const obj = { isStreaming }
+            const obj = {isStreaming}
             return res.json(obj)
         })
 
@@ -546,7 +548,7 @@ export class App {
                 return res.status(500).send('Error clearing chat messages')
             }
 
-            const deleteOptions: FindOptionsWhere<ChatMessage> = { chatflowid }
+            const deleteOptions: FindOptionsWhere<ChatMessage> = {chatflowid}
             if (chatId) deleteOptions.chatId = chatId
             if (memoryType) deleteOptions.memoryType = memoryType
             if (sessionId) deleteOptions.sessionId = sessionId
@@ -637,7 +639,7 @@ export class App {
 
         // Delete all credentials from chatflowid
         this.app.delete('/api/v1/credentials/:id', async (req: Request, res: Response) => {
-            const results = await this.AppDataSource.getRepository(Credential).delete({ id: req.params.id })
+            const results = await this.AppDataSource.getRepository(Credential).delete({id: req.params.id})
             return res.json(results)
         })
 
@@ -694,7 +696,7 @@ export class App {
 
         // Delete tool
         this.app.delete('/api/v1/tools/:id', async (req: Request, res: Response) => {
-            const results = await this.AppDataSource.getRepository(Tool).delete({ id: req.params.id })
+            const results = await this.AppDataSource.getRepository(Tool).delete({id: req.params.id})
             return res.json(results)
         })
 
@@ -730,7 +732,7 @@ export class App {
             const openAIApiKey = decryptedCredentialData['openAIApiKey']
             if (!openAIApiKey) return res.status(404).send(`OpenAI ApiKey not found`)
 
-            const openai = new OpenAI({ apiKey: openAIApiKey })
+            const openai = new OpenAI({apiKey: openAIApiKey})
             const retrievedAssistant = await openai.beta.assistants.retrieve(req.params.id)
             const resp = await openai.files.list()
             const existingFiles = resp.data ?? []
@@ -756,7 +758,7 @@ export class App {
             const openAIApiKey = decryptedCredentialData['openAIApiKey']
             if (!openAIApiKey) return res.status(404).send(`OpenAI ApiKey not found`)
 
-            const openai = new OpenAI({ apiKey: openAIApiKey })
+            const openai = new OpenAI({apiKey: openAIApiKey})
             const retrievedAssistants = await openai.beta.assistants.list()
 
             return res.json(retrievedAssistants.data)
@@ -782,7 +784,7 @@ export class App {
                 const openAIApiKey = decryptedCredentialData['openAIApiKey']
                 if (!openAIApiKey) return res.status(404).send(`OpenAI ApiKey not found`)
 
-                const openai = new OpenAI({ apiKey: openAIApiKey })
+                const openai = new OpenAI({apiKey: openAIApiKey})
 
                 let tools = []
                 if (assistantDetails.tools) {
@@ -810,7 +812,7 @@ export class App {
                         const bf = Buffer.from(splitDataURI.pop() || '', 'base64')
                         const filePath = path.join(getUserHome(), '.flowise', 'openai-assistant', filename)
                         if (!fs.existsSync(path.join(getUserHome(), '.flowise', 'openai-assistant'))) {
-                            fs.mkdirSync(path.dirname(filePath), { recursive: true })
+                            fs.mkdirSync(path.dirname(filePath), {recursive: true})
                         }
                         if (!fs.existsSync(filePath)) {
                             fs.writeFileSync(filePath, bf)
@@ -905,7 +907,7 @@ export class App {
                 const openAIApiKey = decryptedCredentialData['openAIApiKey']
                 if (!openAIApiKey) return res.status(404).send(`OpenAI ApiKey not found`)
 
-                const openai = new OpenAI({ apiKey: openAIApiKey })
+                const openai = new OpenAI({apiKey: openAIApiKey})
 
                 let tools = []
                 if (assistantDetails.tools) {
@@ -933,7 +935,7 @@ export class App {
                         const bf = Buffer.from(splitDataURI.pop() || '', 'base64')
                         const filePath = path.join(getUserHome(), '.flowise', 'openai-assistant', filename)
                         if (!fs.existsSync(path.join(getUserHome(), '.flowise', 'openai-assistant'))) {
-                            fs.mkdirSync(path.dirname(filePath), { recursive: true })
+                            fs.mkdirSync(path.dirname(filePath), {recursive: true})
                         }
                         if (!fs.existsSync(filePath)) {
                             fs.writeFileSync(filePath, bf)
@@ -1010,9 +1012,9 @@ export class App {
                 const openAIApiKey = decryptedCredentialData['openAIApiKey']
                 if (!openAIApiKey) return res.status(404).send(`OpenAI ApiKey not found`)
 
-                const openai = new OpenAI({ apiKey: openAIApiKey })
+                const openai = new OpenAI({apiKey: openAIApiKey})
 
-                const results = await this.AppDataSource.getRepository(Assistant).delete({ id: req.params.id })
+                const results = await this.AppDataSource.getRepository(Assistant).delete({id: req.params.id})
 
                 if (req.query.isDeleteBoth) await openai.beta.assistants.del(assistantDetails.id)
 
@@ -1054,7 +1056,7 @@ export class App {
         })
 
         this.app.post('/api/v1/node-config', async (req: Request, res: Response) => {
-            const nodes = [{ data: req.body }] as IReactFlowNode[]
+            const nodes = [{data: req.body}] as IReactFlowNode[]
             const availableConfigs = findAvailableConfigs(nodes, this.nodesPool.componentCredentials)
             return res.json(availableConfigs)
         })
@@ -1081,7 +1083,7 @@ export class App {
             try {
                 const content = await fs.promises.readFile(packagejsonPath, 'utf8')
                 const parsedContent = JSON.parse(content)
-                return res.json({ version: parsedContent.version })
+                return res.json({version: parsedContent.version})
             } catch (error) {
                 return res.status(500).send(`Version not found: ${error}`)
             }
@@ -1112,9 +1114,9 @@ export class App {
                 let hub = new Client()
                 const prompt = await hub.pull(req.body.promptName)
                 const templates = parsePrompt(prompt)
-                return res.json({ status: 'OK', prompt: req.body.promptName, templates: templates })
+                return res.json({status: 'OK', prompt: req.body.promptName, templates: templates})
             } catch (e: any) {
-                return res.json({ status: 'ERROR', prompt: req.body.promptName, error: e?.message })
+                return res.json({status: 'ERROR', prompt: req.body.promptName, error: e?.message})
             }
         })
 
@@ -1125,11 +1127,11 @@ export class App {
                 const url = `https://api.hub.langchain.com/repos/?limit=100&${tags}has_commits=true&sort_field=num_likes&sort_direction=desc&is_archived=false`
                 axios.get(url).then((response) => {
                     if (response.data.repos) {
-                        return res.json({ status: 'OK', repos: response.data.repos })
+                        return res.json({status: 'OK', repos: response.data.repos})
                     }
                 })
             } catch (e: any) {
-                return res.json({ status: 'ERROR', repos: [] })
+                return res.json({status: 'ERROR', repos: []})
             }
         })
 
@@ -1239,7 +1241,7 @@ export class App {
 
         // Delete variable via id
         this.app.delete('/api/v1/variables/:id', async (req: Request, res: Response) => {
-            const results = await this.AppDataSource.getRepository(Variable).delete({ id: req.params.id })
+            const results = await this.AppDataSource.getRepository(Variable).delete({id: req.params.id})
             return res.json(results)
         })
 
@@ -1254,7 +1256,7 @@ export class App {
                 for (const key of keys) {
                     const chatflows = await this.AppDataSource.getRepository(ChatFlow)
                         .createQueryBuilder('cf')
-                        .where('cf.apikeyid = :apikeyid', { apikeyid: key.id })
+                        .where('cf.apikeyid = :apikeyid', {apikeyid: key.id})
                         .getMany()
                     const linkedChatFlows: any[] = []
                     chatflows.map((cf) => {
@@ -1417,9 +1419,9 @@ export class App {
             const files = (req.files as any[]) || []
 
             if (files.length) {
-                const overrideConfig: ICommonObject = { ...req.body }
+                const overrideConfig: ICommonObject = {...req.body}
                 for (const file of files) {
-                    const fileData = fs.readFileSync(file.path, { encoding: 'base64' })
+                    const fileData = fs.readFileSync(file.path, {encoding: 'base64'})
                     const dataBase64String = `data:${file.mimetype};base64,${fileData},filename:${file.filename}`
 
                     const fileInputField = mapMimeTypeToInputField(file.mimetype)
@@ -1462,7 +1464,7 @@ export class App {
                 return res.status(500).send('No vector node found')
             }
 
-            const { graph } = constructGraphs(nodes, edges, { isReversed: true })
+            const {graph} = constructGraphs(nodes, edges, {isReversed: true})
 
             const nodeIds = getAllConnectedNodes(graph, stopNodeId)
 
@@ -1473,7 +1475,7 @@ export class App {
                 }
             }
 
-            const { startingNodeIds, depthQueue } = getStartingNodes(filteredGraph, stopNodeId)
+            const {startingNodeIds, depthQueue} = getStartingNodes(filteredGraph, stopNodeId)
 
             await buildLangchain(
                 startingNodeIds,
@@ -1523,6 +1525,13 @@ export class App {
             })
             if (!chatflow) return res.status(404).send(`Chatflow ${chatflowid} not found`)
 
+            let isKorean: boolean
+            isKorean = detectKorean(req.body.question)
+
+            if(isKorean) {
+                req.body.question = await translateWithGPT3('Korean', 'English', req.body.question)
+            }
+
             const chatId = incomingInput.chatId ?? incomingInput.overrideConfig?.sessionId ?? uuidv4()
             const userMessageDateTime = new Date()
 
@@ -1536,9 +1545,9 @@ export class App {
             const files = (req.files as any[]) || []
 
             if (files.length) {
-                const overrideConfig: ICommonObject = { ...req.body }
+                const overrideConfig: ICommonObject = {...req.body}
                 for (const file of files) {
-                    const fileData = fs.readFileSync(file.path, { encoding: 'base64' })
+                    const fileData = fs.readFileSync(file.path, {encoding: 'base64'})
                     const dataBase64String = `data:${file.mimetype};base64,${fileData},filename:${file.filename}`
 
                     const fileInputField = mapMimeTypeToInputField(file.mimetype)
@@ -1591,7 +1600,7 @@ export class App {
                 )
             } else {
                 /*** Get Ending Node with Directed Graph  ***/
-                const { graph, nodeDependencies } = constructGraphs(nodes, edges)
+                const {graph, nodeDependencies} = constructGraphs(nodes, edges)
                 const directedGraph = graph
                 const endingNodeIds = getEndingNodes(nodeDependencies, directedGraph)
                 if (!endingNodeIds.length) return res.status(500).send(`Ending nodes not found`)
@@ -1646,7 +1655,7 @@ export class App {
                 }
 
                 /*** Get Starting Nodes with Reversed Graph ***/
-                const constructedObj = constructGraphs(nodes, edges, { isReversed: true })
+                const constructedObj = constructGraphs(nodes, edges, {isReversed: true})
                 const nonDirectedGraph = constructedObj.graph
                 let startingNodeIds: string[] = []
                 let depthQueue: IDepthQueue = {}
@@ -1708,31 +1717,41 @@ export class App {
 
             const nodeInstanceFilePath = this.nodesPool.componentNodes[nodeToExecuteData.name].filePath as string
             const nodeModule = await import(nodeInstanceFilePath)
-            const nodeInstance = new nodeModule.nodeClass({ sessionId })
+            const nodeInstance = new nodeModule.nodeClass({sessionId})
 
             let result = isStreamValid
                 ? await nodeInstance.run(nodeToExecuteData, incomingInput.question, {
-                      chatId,
-                      chatflowid,
-                      chatHistory: incomingInput.history,
-                      logger,
-                      appDataSource: this.AppDataSource,
-                      databaseEntities,
-                      analytic: chatflow.analytic,
-                      socketIO,
-                      socketIOClientId: incomingInput.socketIOClientId
-                  })
+                    chatId,
+                    chatflowid,
+                    chatHistory: incomingInput.history,
+                    logger,
+                    appDataSource: this.AppDataSource,
+                    databaseEntities,
+                    analytic: chatflow.analytic,
+                    socketIO,
+                    socketIOClientId: incomingInput.socketIOClientId
+                })
                 : await nodeInstance.run(nodeToExecuteData, incomingInput.question, {
-                      chatId,
-                      chatflowid,
-                      chatHistory: incomingInput.history,
-                      logger,
-                      appDataSource: this.AppDataSource,
-                      databaseEntities,
-                      analytic: chatflow.analytic
-                  })
+                    chatId,
+                    chatflowid,
+                    chatHistory: incomingInput.history,
+                    logger,
+                    appDataSource: this.AppDataSource,
+                    databaseEntities,
+                    analytic: chatflow.analytic
+                })
 
-            result = typeof result === 'string' ? { text: result } : result
+            let translated: string
+            if (typeof result === 'string') {
+                if (isKorean) {
+                    //질문이 한국어면 무조건 번역한다.
+                    translated = await translateWithGPT3('English', 'Korean', result)
+                    result = {text: translated}
+                } else {
+                    result = {text: result}
+                }
+            }
+            // result = typeof result === 'string' ? { text: result } : result
 
             // Retrieve threadId from assistant if exists
             if (typeof result === 'object' && result.assistant) {
