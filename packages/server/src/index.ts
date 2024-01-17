@@ -67,6 +67,7 @@ import {parsePrompt} from './utils/hub'
 import {Variable} from './database/entities/Variable'
 import {detectKorean} from "./utils/detectLanguage";
 import translateWithGPT3 from "./api/translate";
+import answerInKorean from "./api/answer";
 
 export class App {
     app: express.Application
@@ -1745,7 +1746,7 @@ export class App {
             if (typeof result === 'string') {
                 if (detectKorean(req.body.question)) {
                     //질문이 한국어면 무조건 번역한다.
-                    translated = await translateWithGPT3('English', 'Korean', result)
+                    translated = await answerInKorean(result)
                     result = {text: translated}
                 } else {
                     result = {text: result}
