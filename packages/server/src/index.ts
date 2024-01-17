@@ -1746,9 +1746,11 @@ export class App {
                 if (isKorean) {
                     //질문이 한국어면 무조건 번역한다.
                     translated = await translateWithGPT3('English', 'Korean', result)
+                    console.log('translated : ' + translated)
                     result = {text: translated}
                 } else {
                     result = {text: result}
+                    console.log('result : ' + result)
                 }
             }
             // result = typeof result === 'string' ? { text: result } : result
