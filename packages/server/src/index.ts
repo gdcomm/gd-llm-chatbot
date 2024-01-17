@@ -1525,12 +1525,12 @@ export class App {
             })
             if (!chatflow) return res.status(404).send(`Chatflow ${chatflowid} not found`)
 
-            let isKorean: boolean
-            isKorean = detectKorean(req.body.question)
-
-            if(isKorean) {
-                req.body.question = await translateWithGPT3('Korean', 'English', req.body.question)
-            }
+            // let isKorean: boolean
+            // isKorean = detectKorean(req.body.question)
+            //
+            // if(isKorean) {
+            //     req.body.question = await translateWithGPT3('Korean', 'English', req.body.question)
+            // }
 
             const chatId = incomingInput.chatId ?? incomingInput.overrideConfig?.sessionId ?? uuidv4()
             const userMessageDateTime = new Date()
@@ -1741,19 +1741,19 @@ export class App {
                     analytic: chatflow.analytic
                 })
 
-            let translated: string
-            if (typeof result === 'string') {
-                if (isKorean) {
-                    //질문이 한국어면 무조건 번역한다.
-                    translated = await translateWithGPT3('English', 'Korean', result)
-                    console.log('translated : ' + translated)
-                    result = {text: translated}
-                } else {
-                    result = {text: result}
-                    console.log('result : ' + result)
-                }
-            }
-            // result = typeof result === 'string' ? { text: result } : result
+            // let translated: string
+            // if (typeof result === 'string') {
+            //     if (isKorean) {
+            //         //질문이 한국어면 무조건 번역한다.
+            //         translated = await translateWithGPT3('English', 'Korean', result)
+            //         console.log('translated : ' + translated)
+            //         result = {text: translated}
+            //     } else {
+            //         result = {text: result}
+            //         console.log('result : ' + result)
+            //     }
+            // }
+            result = typeof result === 'string' ? { text: result } : result
 
             // Retrieve threadId from assistant if exists
             if (typeof result === 'object' && result.assistant) {
