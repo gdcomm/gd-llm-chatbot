@@ -1,6 +1,6 @@
-import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src'
+import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src/Interface'
 import { NodeVM } from 'vm2'
-import { availableDependencies, handleEscapeCharacters } from '../../../src'
+import { availableDependencies, handleEscapeCharacters } from '../../../src/utils'
 
 class CustomFunction_Utilities implements INode {
     label: string
@@ -10,6 +10,7 @@ class CustomFunction_Utilities implements INode {
     type: string
     icon: string
     category: string
+    tags: string[]
     baseClasses: string[]
     inputs: INodeParams[]
     outputs: INodeOutputsValue[]
@@ -17,12 +18,13 @@ class CustomFunction_Utilities implements INode {
     constructor() {
         this.label = 'Custom JS Function'
         this.name = 'customFunction'
-        this.version = 1.0
+        this.version = 2.0
         this.type = 'CustomFunction'
         this.icon = 'customfunction.svg'
         this.category = 'Utilities'
         this.description = `Execute custom javascript function`
         this.baseClasses = [this.type, 'Utilities']
+        this.tags = ['Utilities']
         this.inputs = [
             {
                 label: 'Input Variables',
@@ -51,13 +53,31 @@ class CustomFunction_Utilities implements INode {
                 label: 'Output',
                 name: 'output',
                 baseClasses: ['string', 'number', 'boolean', 'json', 'array']
+            },
+            {
+                label: 'Ending Node',
+                name: 'EndingNode',
+                baseClasses: [this.type]
             }
         ]
     }
 
-    async init(nodeData: INodeData, input: string): Promise<any> {
+    async init(nodeData: INodeData, input: string, options: ICommonObject): Promise<any> {
+        const isEndingNode = nodeData?.outputs?.output === 'EndingNode'
+        if (isEndingNode && !options.isRun) return // prevent running both init and run twice
+
         const javascriptFunction = nodeData.inputs?.javascriptFunction as string
         const functionInputVariablesRaw = nodeData.inputs?.functionInputVariables
+        const appDataSource = options.appDataSource as DataSource
+        const databaseEntities = options.databaseEntities as IDatabaseEntity
+
+        const variables = await getVars(appDataSource, databaseEntities, nodeData)
+        const flow = {
+            chatflowId: options.chatflowid,
+            sessionId: options.sessionId,
+            chatId: options.chatId,
+            input
+        }
 
         let inputVars: ICommonObject = {}
         if (functionInputVariablesRaw) {
@@ -69,33 +89,31 @@ class CustomFunction_Utilities implements INode {
             }
         }
 
-        let sandbox: any = { $input: input }
-
-        if (Object.keys(inputVars).length) {
-            for (const item in inputVars) {
-                let value = inputVars[item]
-                if (typeof value === 'string') {
-                    value = handleEscapeCharacters(value, true)
+        // Some values might be a stringified JSON, parse it
+        for (const key in inputVars) {
+            let value = inputVars[key]
+            if (typeof value === 'string') {
+                value = handleEscapeCharacters(value, true)
+                if (value.startsWith('{') && value.endsWith('}')) {
+                    try {
+                        value = JSON.parse(value)
+                    } catch (e) {
+                        // ignore
+                    }
                 }
-                sandbox[`$${item}`] = value
+                inputVars[key] = value
             }
         }
 
-        const defaultAllowBuiltInDep = [
-            'assert',
-            'buffer',
-            'crypto',
-            'events',
-            'http',
-            'https',
-            'net',
-            'path',
-            'querystring',
-            'timers',
-            'tls',
-            'url',
-            'zlib'
-        ]
+        let sandbox: any = { $input: input }
+        sandbox['$vars'] = prepareSandboxVars(variables)
+        sandbox['$flow'] = flow
+
+        if (Object.keys(inputVars).length) {
+            for (const item in inputVars) {
+                sandbox[`$${item}`] = inputVars[item]
+            }
+        }
 
         const builtinDeps = process.env.TOOL_FUNCTION_BUILTIN_DEP
             ? defaultAllowBuiltInDep.concat(process.env.TOOL_FUNCTION_BUILTIN_DEP.split(','))
@@ -115,13 +133,18 @@ class CustomFunction_Utilities implements INode {
         const vm = new NodeVM(nodeVMOptions)
         try {
             const response = await vm.run(`module.exports = async function() {${javascriptFunction}}()`, __dirname)
-            if (typeof response === 'string') {
+
+            if (typeof response === 'string' && !isEndingNode) {
                 return handleEscapeCharacters(response, false)
             }
             return response
         } catch (e) {
             throw new Error(e)
         }
+    }
+
+    async run(nodeData: INodeData, input: string, options: ICommonObject): Promise<string> {
+        return await this.init(nodeData, input, { ...options, isRun: true })
     }
 }
 

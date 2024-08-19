@@ -1,11 +1,12 @@
 import { Pool } from 'pg'
 import { flatten } from 'lodash'
 import { DataSourceOptions } from 'typeorm'
-import { Embeddings } from 'langchain/embeddings/base'
-import { Document } from 'langchain/document'
-import { TypeORMVectorStore, TypeORMVectorStoreDocument } from 'langchain/vectorstores/typeorm'
-import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src/Interface'
+import { Embeddings } from '@langchain/core/embeddings'
+import { Document } from '@langchain/core/documents'
+import { TypeORMVectorStore, TypeORMVectorStoreDocument } from '@langchain/community/vectorstores/typeorm'
+import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams, IndexingResult } from '../../../src/Interface'
 import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+import { index } from '../../../src/indexing'
 
 class Postgres_VectorStores implements INode {
     label: string
@@ -24,13 +25,12 @@ class Postgres_VectorStores implements INode {
     constructor() {
         this.label = 'Postgres'
         this.name = 'postgres'
-        this.version = 2.0
+        this.version = 5.0
         this.type = 'Postgres'
         this.icon = 'postgres.svg'
         this.category = 'Vector Stores'
         this.description = 'Upsert embedded data and perform similarity search upon query using pgvector on Postgres'
         this.baseClasses = [this.type, 'VectorStoreRetriever', 'BaseRetriever']
-        this.badge = 'NEW'
         this.credential = {
             label: 'Connect Credential',
             name: 'credential',
@@ -51,6 +51,13 @@ class Postgres_VectorStores implements INode {
                 type: 'Embeddings'
             },
             {
+                label: 'Record Manager',
+                name: 'recordManager',
+                type: 'RecordManager',
+                description: 'Keep track of the record to prevent duplication',
+                optional: true
+            },
+            {
                 label: 'Host',
                 name: 'host',
                 type: 'string'
@@ -59,13 +66,6 @@ class Postgres_VectorStores implements INode {
                 label: 'Database',
                 name: 'database',
                 type: 'string'
-            },
-            {
-                label: 'SSL Connection',
-                name: 'sslConnection',
-                type: 'boolean',
-                default: false,
-                optional: false
             },
             {
                 label: 'Port',
@@ -97,6 +97,13 @@ class Postgres_VectorStores implements INode {
                 type: 'number',
                 additionalParams: true,
                 optional: true
+            },
+            {
+                label: 'Postgres Metadata Filter',
+                name: 'pgMetadataFilter',
+                type: 'json',
+                additionalParams: true,
+                optional: true
             }
         ]
         this.outputs = [
@@ -115,7 +122,7 @@ class Postgres_VectorStores implements INode {
 
     //@ts-ignore
     vectorStoreMethods = {
-        async upsert(nodeData: INodeData, options: ICommonObject): Promise<void> {
+        async upsert(nodeData: INodeData, options: ICommonObject): Promise<Partial<IndexingResult>> {
             const credentialData = await getCredentialData(nodeData.credential ?? '', options)
             const user = getCredentialParam('user', credentialData, nodeData)
             const password = getCredentialParam('password', credentialData, nodeData)
@@ -124,7 +131,7 @@ class Postgres_VectorStores implements INode {
             const docs = nodeData.inputs?.document as Document[]
             const embeddings = nodeData.inputs?.embeddings as Embeddings
             const additionalConfig = nodeData.inputs?.additionalConfig as string
-            const sslConnection = nodeData.inputs?.sslConnection as boolean
+            const recordManager = nodeData.inputs?.recordManager
 
             let additionalConfiguration = {}
             if (additionalConfig) {
@@ -142,8 +149,7 @@ class Postgres_VectorStores implements INode {
                 port: nodeData.inputs?.port as number,
                 username: user,
                 password: password,
-                database: nodeData.inputs?.database as string,
-                ssl: sslConnection
+                database: nodeData.inputs?.database as string
             }
 
             const args = {
@@ -160,11 +166,89 @@ class Postgres_VectorStores implements INode {
             }
 
             try {
-                const vectorStore = await TypeORMVectorStore.fromDocuments(finalDocs, embeddings, args)
+                if (recordManager) {
+                    const vectorStore = await TypeORMVectorStore.fromDataSource(embeddings, args)
 
-                // Avoid Illegal invocation error
-                vectorStore.similaritySearchVectorWithScore = async (query: number[], k: number, filter?: any) => {
-                    return await similaritySearchVectorWithScore(query, k, tableName, postgresConnectionOptions, filter)
+                    // Avoid Illegal invocation error
+                    vectorStore.similaritySearchVectorWithScore = async (query: number[], k: number, filter?: any) => {
+                        return await similaritySearchVectorWithScore(query, k, tableName, postgresConnectionOptions, filter)
+                    }
+
+                    await recordManager.createSchema()
+
+                    const res = await index({
+                        docsSource: finalDocs,
+                        recordManager,
+                        vectorStore,
+                        options: {
+                            cleanup: recordManager?.cleanup,
+                            sourceIdKey: recordManager?.sourceIdKey ?? 'source',
+                            vectorStoreName: tableName
+                        }
+                    })
+
+                    return res
+                } else {
+                    const vectorStore = await TypeORMVectorStore.fromDocuments(finalDocs, embeddings, args)
+
+                    // Avoid Illegal invocation error
+                    vectorStore.similaritySearchVectorWithScore = async (query: number[], k: number, filter?: any) => {
+                        return await similaritySearchVectorWithScore(query, k, tableName, postgresConnectionOptions, filter)
+                    }
+
+                    return { numAdded: finalDocs.length, addedDocs: finalDocs }
+                }
+            } catch (e) {
+                throw new Error(e)
+            }
+        },
+        async delete(nodeData: INodeData, ids: string[], options: ICommonObject): Promise<void> {
+            const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+            const user = getCredentialParam('user', credentialData, nodeData)
+            const password = getCredentialParam('password', credentialData, nodeData)
+            const _tableName = nodeData.inputs?.tableName as string
+            const tableName = _tableName ? _tableName : 'documents'
+            const embeddings = nodeData.inputs?.embeddings as Embeddings
+            const additionalConfig = nodeData.inputs?.additionalConfig as string
+            const recordManager = nodeData.inputs?.recordManager
+
+            let additionalConfiguration = {}
+            if (additionalConfig) {
+                try {
+                    additionalConfiguration = typeof additionalConfig === 'object' ? additionalConfig : JSON.parse(additionalConfig)
+                } catch (exception) {
+                    throw new Error('Invalid JSON in the Additional Configuration: ' + exception)
+                }
+            }
+
+            const postgresConnectionOptions = {
+                ...additionalConfiguration,
+                type: 'postgres',
+                host: nodeData.inputs?.host as string,
+                port: nodeData.inputs?.port as number,
+                username: user,
+                password: password,
+                database: nodeData.inputs?.database as string
+            }
+
+            const args = {
+                postgresConnectionOptions: postgresConnectionOptions as DataSourceOptions,
+                tableName: tableName
+            }
+
+            const vectorStore = await TypeORMVectorStore.fromDataSource(embeddings, args)
+
+            try {
+                if (recordManager) {
+                    const vectorStoreName = tableName
+                    await recordManager.createSchema()
+                    ;(recordManager as any).namespace = (recordManager as any).namespace + '_' + vectorStoreName
+                    const keys: string[] = await recordManager.listKeys({})
+
+                    await vectorStore.delete({ ids: keys })
+                    await recordManager.deleteKeys(keys)
+                } else {
+                    await vectorStore.delete({ ids })
                 }
             } catch (e) {
                 throw new Error(e)
@@ -183,6 +267,12 @@ class Postgres_VectorStores implements INode {
         const output = nodeData.outputs?.output as string
         const topK = nodeData.inputs?.topK as string
         const k = topK ? parseFloat(topK) : 4
+        const _pgMetadataFilter = nodeData.inputs?.pgMetadataFilter
+
+        let pgMetadataFilter: any
+        if (_pgMetadataFilter) {
+            pgMetadataFilter = typeof _pgMetadataFilter === 'object' ? _pgMetadataFilter : JSON.parse(_pgMetadataFilter)
+        }
 
         let additionalConfiguration = {}
         if (additionalConfig) {
@@ -198,7 +288,8 @@ class Postgres_VectorStores implements INode {
             type: 'postgres',
             host: nodeData.inputs?.host as string,
             port: nodeData.inputs?.port as number,
-            username: user,
+            username: user, // Required by TypeORMVectorStore
+            user: user, // Required by Pool in similaritySearchVectorWithScore
             password: password,
             database: nodeData.inputs?.database as string
         }
@@ -217,7 +308,7 @@ class Postgres_VectorStores implements INode {
             [ERROR]: uncaughtException:  Illegal invocation TypeError: Illegal invocation at Socket.ref (node:net:1524:18) at Connection.ref (.../node_modules/pg/lib/connection.js:183:17) at Client.ref (.../node_modules/pg/lib/client.js:591:21) at BoundPool._pulseQueue (/node_modules/pg-pool/index.js:148:28) at .../node_modules/pg-pool/index.js:184:37 at process.processTicksAndRejections (node:internal/process/task_queues:77:11)
         */
         vectorStore.similaritySearchVectorWithScore = async (query: number[], k: number, filter?: any) => {
-            return await similaritySearchVectorWithScore(query, k, tableName, postgresConnectionOptions, filter)
+            return await similaritySearchVectorWithScore(query, k, tableName, postgresConnectionOptions, filter ?? pgMetadataFilter)
         }
 
         if (output === 'retriever') {
@@ -225,6 +316,9 @@ class Postgres_VectorStores implements INode {
             return retriever
         } else if (output === 'vectorStore') {
             ;(vectorStore as any).k = k
+            if (pgMetadataFilter) {
+                ;(vectorStore as any).filter = pgMetadataFilter
+            }
             return vectorStore
         }
         return vectorStore
@@ -239,7 +333,8 @@ const similaritySearchVectorWithScore = async (
     filter?: any
 ) => {
     const embeddingString = `[${query.join(',')}]`
-    const _filter = filter ?? '{}'
+    let _filter = '{}'
+    if (filter && typeof filter === 'object') _filter = JSON.stringify(filter)
 
     const queryString = `
         SELECT *, embedding <=> $1 as "_distance"
@@ -248,14 +343,7 @@ const similaritySearchVectorWithScore = async (
         ORDER BY "_distance" ASC
         LIMIT $3;`
 
-    const poolOptions = {
-        host: postgresConnectionOptions.host,
-        port: postgresConnectionOptions.port,
-        user: postgresConnectionOptions.username,
-        password: postgresConnectionOptions.password,
-        database: postgresConnectionOptions.database
-    }
-    const pool = new Pool(poolOptions)
+    const pool = new Pool(postgresConnectionOptions)
     const conn = await pool.connect()
 
     const documents = await conn.query(queryString, [embeddingString, _filter, k])

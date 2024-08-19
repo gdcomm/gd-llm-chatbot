@@ -1,9 +1,9 @@
 /* eslint-disable */
 import { Entity, Column, CreateDateColumn, UpdateDateColumn, PrimaryGeneratedColumn } from 'typeorm'
-import { IVariable } from "../../Interface";
+import { IVariable } from '../../Interface'
 
 @Entity()
-export class Variable implements IVariable{
+export class Variable implements IVariable {
     @PrimaryGeneratedColumn('uuid')
     id: string
 
@@ -13,13 +13,14 @@ export class Variable implements IVariable{
     @Column({ nullable: true, type: 'text' })
     value: string
 
-    @Column({default: 'string', type: 'text'})
+    @Column({ default: 'string', type: 'text' })
     type: string
 
-
+    @Column({ type: 'timestamp' })
     @CreateDateColumn()
     createdDate: Date
 
+    @Column({ type: 'timestamp' })
     @UpdateDateColumn()
     updatedDate: Date
 }
