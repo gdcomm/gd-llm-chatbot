@@ -57,8 +57,7 @@
         "remark-math": "^5.1.1",
         "socket.io-client": "^4.6.1",
         "uuid": "^9.0.1",
-        "yup": "^0.32.9",
-        "flowise-components": "workspace:*"
+        "yup": "^0.32.9"
     },
     "scripts": {
         "dev": "vite",
